@@ -1,101 +1,120 @@
-const fs = require('fs');
-const path = require('path');
+import React, { useState, useEffect } from 'react';
 
-const express = require('express');
-const mongoose = require('mongoose');
-const bodyParser = require('body-parser');
-const morgan = require('morgan');
+import GoalInput from './components/goals/GoalInput';
+import CourseGoals from './components/goals/CourseGoals';
+import ErrorAlert from './components/UI/ErrorAlert';
 
-const Goal = require('./models/goal');
+const backendUrl =
+  process.env.NODE_ENV === 'development'
+    ? 'http://localhost'
+    : 'http://ecs-lb-783189166.us-east-2.elb.amazonaws.com';
 
-const app = express();
+function App() {
+  const [loadedGoals, setLoadedGoals] = useState([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState(null);
 
-const accessLogStream = fs.createWriteStream(
-  path.join(__dirname, 'logs', 'access.log'),
-  { flags: 'a' }
-);
+  useEffect(function () {
+    async function fetchData() {
+      setIsLoading(true);
 
-app.use(morgan('combined', { stream: accessLogStream }));
+      try {
+        const response = await fetch(backendUrl + '/goals');
 
-app.use(bodyParser.json());
+        const resData = await response.json();
 
-app.use((req, res, next) => {
-  res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-  next();
-});
+        if (!response.ok) {
+          throw new Error(resData.message || 'Fetching the goals failed.');
+        }
 
-app.get('/goals', async (req, res) => {
-  console.log('TRYING TO FETCH GOALS');
-  try {
-    const goals = await Goal.find();
-    res.status(200).json({
-      goals: goals.map((goal) => ({
-        id: goal.id,
-        text: goal.text,
-      })),
-    });
-    console.log('FETCHED GOALS');
-  } catch (err) {
-    console.error('ERROR FETCHING GOALS');
-    console.error(err.message);
-    res.status(500).json({ message: 'Failed to load goals.' });
-  }
-});
-
-app.post('/goals', async (req, res) => {
-  console.log('TRYING TO STORE GOAL');
-  const goalText = req.body.text;
-
-  if (!goalText || goalText.trim().length === 0) {
-    console.log('INVALID INPUT - NO TEXT');
-    return res.status(422).json({ message: 'Invalid goal text.' });
-  }
-
-  const goal = new Goal({
-    text: goalText,
-  });
-
-  try {
-    await goal.save();
-    res
-      .status(201)
-      .json({ message: 'Goal saved', goal: { id: goal.id, text: goalText } });
-    console.log('STORED NEW GOAL');
-  } catch (err) {
-    console.error('ERROR FETCHING GOALS');
-    console.error(err.message);
-    res.status(500).json({ message: 'Failed to save goal.' });
-  }
-});
-
-app.delete('/goals/:id', async (req, res) => {
-  console.log('TRYING TO DELETE GOAL');
-  try {
-    await Goal.deleteOne({ _id: req.params.id });
-    res.status(200).json({ message: 'Deleted goal!' });
-    console.log('DELETED GOAL');
-  } catch (err) {
-    console.error('ERROR FETCHING GOALS');
-    console.error(err.message);
-    res.status(500).json({ message: 'Failed to delete goal.' });
-  }
-});
-
-mongoose.connect(
-  'mongodb://192.168.114.159:27017/goals',
-  {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-  },
-  (err) => {
-    if (err) {
-      console.error('FAILED TO CONNECT TO MONGODB');
-      console.error(err);
-    } else {
-      console.log('CONNECTED TO MONGODB!!');
-      app.listen(80);
+        setLoadedGoals(resData.goals);
+      } catch (err) {
+        setError(
+          err.message ||
+            'Fetching goals failed - the server responsed with an error.'
+        );
+      }
+      setIsLoading(false);
     }
+
+    fetchData();
+  }, []);
+
+  async function addGoalHandler(goalText) {
+    setIsLoading(true);
+
+    try {
+      const response = await fetch(backendUrl + '/goals', {
+        method: 'POST',
+        body: JSON.stringify({
+          text: goalText,
+        }),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      const resData = await response.json();
+
+      if (!response.ok) {
+        throw new Error(resData.message || 'Adding the goal failed.');
+      }
+
+      setLoadedGoals((prevGoals) => {
+        const updatedGoals = [
+          {
+            id: resData.goal.id,
+            text: goalText,
+          },
+          ...prevGoals,
+        ];
+        return updatedGoals;
+      });
+    } catch (err) {
+      setError(
+        err.message ||
+          'Adding a goal failed - the server responsed with an error.'
+      );
+    }
+    setIsLoading(false);
   }
-);
+
+  async function deleteGoalHandler(goalId) {
+    setIsLoading(true);
+
+    try {
+      const response = await fetch(backendUrl + '/goals/' + goalId, {
+        method: 'DELETE',
+      });
+
+      const resData = await response.json();
+
+      if (!response.ok) {
+        throw new Error(resData.message || 'Deleting the goal failed.');
+      }
+
+      setLoadedGoals((prevGoals) => {
+        const updatedGoals = prevGoals.filter((goal) => goal.id !== goalId);
+        return updatedGoals;
+      });
+    } catch (err) {
+      setError(
+        err.message ||
+          'Deleting the goal failed - the server responsed with an error.'
+      );
+    }
+    setIsLoading(false);
+  }
+
+  return (
+    <div>
+      {error && <ErrorAlert errorText={error} />}
+      <GoalInput onAddGoal={addGoalHandler} />
+      {!isLoading && (
+        <CourseGoals goals={loadedGoals} onDeleteGoal={deleteGoalHandler} />
+      )}
+    </div>
+  );
+}
+
+export default App;
